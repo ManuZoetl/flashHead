@@ -15,13 +15,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HUGGINGFACE_HUB_CACHE=/workspace/.cache/huggingface/hub \
     FLASHHEAD_HOME=/opt/flashhead \
     MODEL_ROOT=/workspace/models \
+    FLASHHEAD_MODEL_VARIANT=both \
     GRADIO_SERVER_NAME=0.0.0.0 \
     GRADIO_SERVER_PORT=7860 \
     RUN_MODE=gradio \
+    CC=/usr/bin/gcc \
+    CXX=/usr/bin/g++ \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
+# TorchInductor compiles native kernels during the first inference. Keep the
+# compiler toolchain in the runtime image instead of installing it on every Pod.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
         ca-certificates \
         curl \
         ffmpeg \
@@ -30,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgl1 \
         libglib2.0-0 \
         libgomp1 \
+        ninja-build \
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install --system
 
@@ -74,20 +81,28 @@ COPY scripts/start.sh /opt/flashhead-container/start.sh
 RUN chmod +x /opt/flashhead-container/start.sh \
     && mkdir -p /workspace/models /workspace/.cache/huggingface \
     && python - <<'PY'
+import shutil
 import sys
-import torch
+
 import flash_attn
 import mediapipe
+import torch
 
 assert sys.version_info[:2] == (3, 10), sys.version
 assert torch.__version__.startswith("2.7.1"), torch.__version__
 assert torch.version.cuda == "12.8", torch.version.cuda
 assert torch._C._GLIBCXX_USE_CXX11_ABI is True
+assert shutil.which("gcc"), "gcc is missing"
+assert shutil.which("g++"), "g++ is missing"
+assert shutil.which("ninja"), "ninja is missing"
 print("Python:", sys.version)
 print("Torch:", torch.__version__)
 print("CUDA wheel:", torch.version.cuda)
 print("FlashAttention:", flash_attn.__version__)
 print("MediaPipe:", mediapipe.__version__)
+print("C compiler:", shutil.which("gcc"))
+print("C++ compiler:", shutil.which("g++"))
+print("Ninja:", shutil.which("ninja"))
 PY
 
 EXPOSE 7860
