@@ -12,10 +12,44 @@ MODEL_ROOT = Path(os.environ.get("MODEL_ROOT", "/workspace/models"))
 FLASHHEAD_DIR = MODEL_ROOT / "SoulX-FlashHead-1_3B"
 WAV2VEC_DIR = MODEL_ROOT / "wav2vec2-base-960h"
 MAX_WORKERS = int(os.environ.get("HF_MAX_WORKERS", "8"))
+MODEL_VARIANT = os.environ.get("FLASHHEAD_MODEL_VARIANT", "both").strip().lower()
+
+FLASHHEAD_REPO = "Soul-AILab/SoulX-FlashHead-1_3B"
+WAV2VEC_REPO = "facebook/wav2vec2-base-960h"
+
+VARIANT_FILES: dict[str, tuple[str, ...]] = {
+    "lite": (
+        "Model_Lite/config.json",
+        "Model_Lite/diffusion_pytorch_model.safetensors",
+        "VAE_LTX/config.json",
+        "VAE_LTX/diffusion_pytorch_model.safetensors",
+    ),
+    "pro": (
+        "Model_Pro/config.json",
+        "Model_Pro/diffusion_pytorch_model.safetensors",
+        "VAE_Wan/Wan2.1_VAE.pth",
+    ),
+}
+
+VARIANT_PATTERNS: dict[str, tuple[str, ...]] = {
+    "lite": ("Model_Lite/*", "VAE_LTX/*"),
+    "pro": ("Model_Pro/*", "VAE_Wan/*"),
+}
 
 
-def has_all(path: Path, patterns: tuple[str, ...]) -> bool:
-    return path.exists() and all(any(path.glob(pattern)) for pattern in patterns)
+def files_present(root: Path, relative_paths: tuple[str, ...]) -> bool:
+    return all((root / relative_path).is_file() for relative_path in relative_paths)
+
+
+def requested_variants() -> tuple[str, ...]:
+    if MODEL_VARIANT == "both":
+        return ("lite", "pro")
+    if MODEL_VARIANT in VARIANT_FILES:
+        return (MODEL_VARIANT,)
+    valid = "lite, pro, both"
+    raise ValueError(
+        f"Unsupported FLASHHEAD_MODEL_VARIANT={MODEL_VARIANT!r}. Use one of: {valid}."
+    )
 
 
 def download_with_retry(
@@ -48,55 +82,90 @@ def download_with_retry(
             time.sleep(min(30, attempt * 5))
 
 
-def main() -> None:
-    MODEL_ROOT.mkdir(parents=True, exist_ok=True)
+def ensure_flashhead_models(variants: tuple[str, ...]) -> None:
+    missing_variants = [
+        variant
+        for variant in variants
+        if not files_present(FLASHHEAD_DIR, VARIANT_FILES[variant])
+    ]
 
-    flashhead_ready = has_all(
-        FLASHHEAD_DIR,
-        (
-            "Model_Lite/*.safetensors",
-            "Model_Lite/config.json",
-            "VAE_LTX/*",
-        ),
-    )
-    if flashhead_ready:
-        print(f"FlashHead Lite weights already present: {FLASHHEAD_DIR}", flush=True)
-    else:
+    for variant in variants:
+        if variant not in missing_variants:
+            print(
+                f"FlashHead {variant.upper()} weights already present: {FLASHHEAD_DIR}",
+                flush=True,
+            )
+
+    if missing_variants:
+        patterns: list[str] = ["README.md", "LICENSE*"]
+        for variant in missing_variants:
+            patterns.extend(VARIANT_PATTERNS[variant])
+
+        print(
+            "Missing FlashHead variants: " + ", ".join(missing_variants),
+            flush=True,
+        )
         download_with_retry(
-            repo_id="Soul-AILab/SoulX-FlashHead-1_3B",
+            repo_id=FLASHHEAD_REPO,
             local_dir=FLASHHEAD_DIR,
-            allow_patterns=[
-                "Model_Lite/*",
-                "VAE_LTX/*",
-                "README.md",
-                "LICENSE*",
-            ],
+            allow_patterns=patterns,
         )
 
-    wav2vec_ready = has_all(
-        WAV2VEC_DIR,
-        (
-            "config.json",
-            "preprocessor_config.json",
-            "*.safetensors",
-        ),
-    ) or has_all(
-        WAV2VEC_DIR,
-        (
-            "config.json",
-            "preprocessor_config.json",
-            "pytorch_model.bin",
-        ),
+    incomplete = [
+        variant
+        for variant in variants
+        if not files_present(FLASHHEAD_DIR, VARIANT_FILES[variant])
+    ]
+    if incomplete:
+        missing_files = [
+            str(FLASHHEAD_DIR / relative_path)
+            for variant in incomplete
+            for relative_path in VARIANT_FILES[variant]
+            if not (FLASHHEAD_DIR / relative_path).is_file()
+        ]
+        raise FileNotFoundError(
+            "FlashHead download completed but required files are missing:\n- "
+            + "\n- ".join(missing_files)
+        )
+
+
+def ensure_wav2vec() -> None:
+    common_files = (
+        "config.json",
+        "preprocessor_config.json",
     )
+    weights_present = any(
+        (WAV2VEC_DIR / filename).is_file()
+        for filename in ("model.safetensors", "pytorch_model.bin")
+    )
+    wav2vec_ready = files_present(WAV2VEC_DIR, common_files) and weights_present
 
     if wav2vec_ready:
         print(f"Wav2Vec2 weights already present: {WAV2VEC_DIR}", flush=True)
-    else:
-        download_with_retry(
-            repo_id="facebook/wav2vec2-base-960h",
-            local_dir=WAV2VEC_DIR,
+        return
+
+    download_with_retry(repo_id=WAV2VEC_REPO, local_dir=WAV2VEC_DIR)
+
+    weights_present = any(
+        (WAV2VEC_DIR / filename).is_file()
+        for filename in ("model.safetensors", "pytorch_model.bin")
+    )
+    if not files_present(WAV2VEC_DIR, common_files) or not weights_present:
+        raise FileNotFoundError(
+            f"Wav2Vec2 download is incomplete under {WAV2VEC_DIR}"
         )
 
+
+def main() -> None:
+    MODEL_ROOT.mkdir(parents=True, exist_ok=True)
+    variants = requested_variants()
+
+    print(
+        "Preparing FlashHead model variant(s): " + ", ".join(variants),
+        flush=True,
+    )
+    ensure_flashhead_models(variants)
+    ensure_wav2vec()
     print("Model preparation complete.", flush=True)
 
 

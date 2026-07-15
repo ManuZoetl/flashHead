@@ -8,12 +8,21 @@ export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-/workspace/.cache/tor
 export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/workspace/.cache/triton}"
 export GRADIO_SERVER_NAME="${GRADIO_SERVER_NAME:-0.0.0.0}"
 export GRADIO_SERVER_PORT="${GRADIO_SERVER_PORT:-7860}"
+export FLASHHEAD_MODEL_VARIANT="${FLASHHEAD_MODEL_VARIANT:-both}"
+export CC="${CC:-/usr/bin/gcc}"
+export CXX="${CXX:-/usr/bin/g++}"
 
 mkdir -p \
   "${MODEL_ROOT}" \
   "${HF_HOME}" \
   "${TORCHINDUCTOR_CACHE_DIR}" \
   "${TRITON_CACHE_DIR}"
+
+echo "RUN_MODE=${RUN_MODE:-gradio}"
+echo "FLASHHEAD_MODEL_VARIANT=${FLASHHEAD_MODEL_VARIANT}"
+echo "MODEL_ROOT=${MODEL_ROOT}"
+echo "CC=${CC}"
+echo "CXX=${CXX}"
 
 if [[ "${SKIP_MODEL_DOWNLOAD:-0}" != "1" ]]; then
   python /opt/flashhead-container/download_models.py
@@ -24,10 +33,13 @@ ln -sfn "${MODEL_ROOT}" /opt/flashhead/models
 cd /opt/flashhead
 
 python - <<'PY'
+import shutil
 import torch
 
 print("Torch:", torch.__version__, flush=True)
 print("CUDA available:", torch.cuda.is_available(), flush=True)
+print("gcc:", shutil.which("gcc"), flush=True)
+print("g++:", shutil.which("g++"), flush=True)
 if torch.cuda.is_available():
     print("GPU:", torch.cuda.get_device_name(0), flush=True)
     print(
@@ -47,15 +59,20 @@ case "${RUN_MODE:-gradio}" in
     exec python gradio_app_streaming.py
     ;;
   smoke)
-    echo "Running the official FlashHead Lite smoke test"
+    smoke_model="${FLASHHEAD_SMOKE_MODEL:-lite}"
+    if [[ "${smoke_model}" != "lite" && "${smoke_model}" != "pro" ]]; then
+      echo "FLASHHEAD_SMOKE_MODEL must be lite or pro, got: ${smoke_model}" >&2
+      exit 2
+    fi
+    echo "Running the official FlashHead ${smoke_model^^} smoke test"
     exec python generate_video.py \
       --ckpt_dir "${MODEL_ROOT}/SoulX-FlashHead-1_3B" \
       --wav2vec_dir "${MODEL_ROOT}/wav2vec2-base-960h" \
-      --model_type lite \
+      --model_type "${smoke_model}" \
       --cond_image examples/girl.png \
       --audio_path examples/podcast_sichuan_16k.wav \
       --audio_encode_mode stream \
-      --save_file /workspace/flashhead-lite-smoke.mp4
+      --save_file "/workspace/flashhead-${smoke_model}-smoke.mp4"
     ;;
   idle|shell)
     echo "Container ready. RUN_MODE=${RUN_MODE}. Keeping the Pod alive."
