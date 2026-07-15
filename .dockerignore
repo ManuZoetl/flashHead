@@ -1,0 +1,11 @@
+**/.git
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.log
+models/
+outputs/
+sample_results/
+.workspace/
+.env
+.env.*
