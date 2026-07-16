@@ -12,44 +12,27 @@ MODEL_ROOT = Path(os.environ.get("MODEL_ROOT", "/workspace/models"))
 FLASHHEAD_DIR = MODEL_ROOT / "SoulX-FlashHead-1_3B"
 WAV2VEC_DIR = MODEL_ROOT / "wav2vec2-base-960h"
 MAX_WORKERS = int(os.environ.get("HF_MAX_WORKERS", "8"))
-MODEL_VARIANT = os.environ.get("FLASHHEAD_MODEL_VARIANT", "both").strip().lower()
 
 FLASHHEAD_REPO = "Soul-AILab/SoulX-FlashHead-1_3B"
 WAV2VEC_REPO = "facebook/wav2vec2-base-960h"
 
-VARIANT_FILES: dict[str, tuple[str, ...]] = {
-    "lite": (
-        "Model_Lite/config.json",
-        "Model_Lite/diffusion_pytorch_model.safetensors",
-        "VAE_LTX/config.json",
-        "VAE_LTX/diffusion_pytorch_model.safetensors",
-    ),
-    "pro": (
-        "Model_Pro/config.json",
-        "Model_Pro/diffusion_pytorch_model.safetensors",
-        "VAE_Wan/Wan2.1_VAE.pth",
-    ),
-}
+LITE_FILES = (
+    "Model_Lite/config.json",
+    "Model_Lite/diffusion_pytorch_model.safetensors",
+    "VAE_LTX/config.json",
+    "VAE_LTX/diffusion_pytorch_model.safetensors",
+)
 
-VARIANT_PATTERNS: dict[str, tuple[str, ...]] = {
-    "lite": ("Model_Lite/*", "VAE_LTX/*"),
-    "pro": ("Model_Pro/*", "VAE_Wan/*"),
-}
+LITE_PATTERNS = [
+    "Model_Lite/*",
+    "VAE_LTX/*",
+    "README.md",
+    "LICENSE*",
+]
 
 
 def files_present(root: Path, relative_paths: tuple[str, ...]) -> bool:
     return all((root / relative_path).is_file() for relative_path in relative_paths)
-
-
-def requested_variants() -> tuple[str, ...]:
-    if MODEL_VARIANT == "both":
-        return ("lite", "pro")
-    if MODEL_VARIANT in VARIANT_FILES:
-        return (MODEL_VARIANT,)
-    valid = "lite, pro, both"
-    raise ValueError(
-        f"Unsupported FLASHHEAD_MODEL_VARIANT={MODEL_VARIANT!r}. Use one of: {valid}."
-    )
 
 
 def download_with_retry(
@@ -82,49 +65,26 @@ def download_with_retry(
             time.sleep(min(30, attempt * 5))
 
 
-def ensure_flashhead_models(variants: tuple[str, ...]) -> None:
-    missing_variants = [
-        variant
-        for variant in variants
-        if not files_present(FLASHHEAD_DIR, VARIANT_FILES[variant])
+def ensure_flashhead_lite() -> None:
+    if files_present(FLASHHEAD_DIR, LITE_FILES):
+        print(f"FlashHead Lite weights already present: {FLASHHEAD_DIR}", flush=True)
+        return
+
+    print("FlashHead Lite weights are missing.", flush=True)
+    download_with_retry(
+        repo_id=FLASHHEAD_REPO,
+        local_dir=FLASHHEAD_DIR,
+        allow_patterns=LITE_PATTERNS,
+    )
+
+    missing_files = [
+        str(FLASHHEAD_DIR / relative_path)
+        for relative_path in LITE_FILES
+        if not (FLASHHEAD_DIR / relative_path).is_file()
     ]
-
-    for variant in variants:
-        if variant not in missing_variants:
-            print(
-                f"FlashHead {variant.upper()} weights already present: {FLASHHEAD_DIR}",
-                flush=True,
-            )
-
-    if missing_variants:
-        patterns: list[str] = ["README.md", "LICENSE*"]
-        for variant in missing_variants:
-            patterns.extend(VARIANT_PATTERNS[variant])
-
-        print(
-            "Missing FlashHead variants: " + ", ".join(missing_variants),
-            flush=True,
-        )
-        download_with_retry(
-            repo_id=FLASHHEAD_REPO,
-            local_dir=FLASHHEAD_DIR,
-            allow_patterns=patterns,
-        )
-
-    incomplete = [
-        variant
-        for variant in variants
-        if not files_present(FLASHHEAD_DIR, VARIANT_FILES[variant])
-    ]
-    if incomplete:
-        missing_files = [
-            str(FLASHHEAD_DIR / relative_path)
-            for variant in incomplete
-            for relative_path in VARIANT_FILES[variant]
-            if not (FLASHHEAD_DIR / relative_path).is_file()
-        ]
+    if missing_files:
         raise FileNotFoundError(
-            "FlashHead download completed but required files are missing:\n- "
+            "FlashHead Lite download completed but required files are missing:\n- "
             + "\n- ".join(missing_files)
         )
 
@@ -158,13 +118,8 @@ def ensure_wav2vec() -> None:
 
 def main() -> None:
     MODEL_ROOT.mkdir(parents=True, exist_ok=True)
-    variants = requested_variants()
-
-    print(
-        "Preparing FlashHead model variant(s): " + ", ".join(variants),
-        flush=True,
-    )
-    ensure_flashhead_models(variants)
+    print("Preparing FlashHead Lite model", flush=True)
+    ensure_flashhead_lite()
     ensure_wav2vec()
     print("Model preparation complete.", flush=True)
 

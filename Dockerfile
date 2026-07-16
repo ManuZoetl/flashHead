@@ -15,7 +15,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HUGGINGFACE_HUB_CACHE=/workspace/.cache/huggingface/hub \
     FLASHHEAD_HOME=/opt/flashhead \
     MODEL_ROOT=/workspace/models \
-    FLASHHEAD_MODEL_VARIANT=both \
+    FLASHHEAD_MODEL_VARIANT=lite \
+    PURGE_PRO_MODELS=1 \
     GRADIO_SERVER_NAME=0.0.0.0 \
     GRADIO_SERVER_PORT=7860 \
     RUN_MODE=gradio \
@@ -53,6 +54,20 @@ RUN git clone "${FLASHHEAD_REPO}" "${FLASHHEAD_HOME}" \
     && git submodule update --init --recursive
 
 WORKDIR /opt/flashhead
+
+# The Jarvis runtime uses only FlashHead Lite. Remove Pro from the Gradio model
+# selector so a slow Pro run cannot be started accidentally.
+RUN python - <<'PY'
+from pathlib import Path
+
+path = Path("/opt/flashhead/gradio_app_streaming.py")
+text = path.read_text(encoding="utf-8")
+old = 'choices=["pro", "lite"],\n                    value="lite",'
+new = 'choices=["lite"],\n                    value="lite",\n                    interactive=False,'
+if old not in text:
+    raise RuntimeError("Could not locate FlashHead model selector to patch")
+path.write_text(text.replace(old, new, 1), encoding="utf-8")
+PY
 
 # Avoid upstream dependency conflicts:
 # - only headless OpenCV is needed in the container
