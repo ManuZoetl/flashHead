@@ -8,7 +8,8 @@ export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-/workspace/.cache/tor
 export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/workspace/.cache/triton}"
 export GRADIO_SERVER_NAME="${GRADIO_SERVER_NAME:-0.0.0.0}"
 export GRADIO_SERVER_PORT="${GRADIO_SERVER_PORT:-7860}"
-export FLASHHEAD_MODEL_VARIANT="${FLASHHEAD_MODEL_VARIANT:-both}"
+export FLASHHEAD_MODEL_VARIANT="lite"
+export PURGE_PRO_MODELS="${PURGE_PRO_MODELS:-1}"
 export CC="${CC:-/usr/bin/gcc}"
 export CXX="${CXX:-/usr/bin/g++}"
 
@@ -23,6 +24,15 @@ echo "FLASHHEAD_MODEL_VARIANT=${FLASHHEAD_MODEL_VARIANT}"
 echo "MODEL_ROOT=${MODEL_ROOT}"
 echo "CC=${CC}"
 echo "CXX=${CXX}"
+
+if [[ "${PURGE_PRO_MODELS}" == "1" ]]; then
+  pro_model_dir="${MODEL_ROOT}/SoulX-FlashHead-1_3B/Model_Pro"
+  pro_vae_dir="${MODEL_ROOT}/SoulX-FlashHead-1_3B/VAE_Wan"
+  if [[ -e "${pro_model_dir}" || -e "${pro_vae_dir}" ]]; then
+    echo "Removing unused FlashHead Pro weights from persistent storage"
+    rm -rf "${pro_model_dir}" "${pro_vae_dir}"
+  fi
+fi
 
 if [[ "${SKIP_MODEL_DOWNLOAD:-0}" != "1" ]]; then
   python /opt/flashhead-container/download_models.py
@@ -55,24 +65,19 @@ fi
 
 case "${RUN_MODE:-gradio}" in
   gradio)
-    echo "Starting FlashHead Gradio on ${GRADIO_SERVER_NAME}:${GRADIO_SERVER_PORT}"
+    echo "Starting FlashHead Lite Gradio on ${GRADIO_SERVER_NAME}:${GRADIO_SERVER_PORT}"
     exec python gradio_app_streaming.py
     ;;
   smoke)
-    smoke_model="${FLASHHEAD_SMOKE_MODEL:-lite}"
-    if [[ "${smoke_model}" != "lite" && "${smoke_model}" != "pro" ]]; then
-      echo "FLASHHEAD_SMOKE_MODEL must be lite or pro, got: ${smoke_model}" >&2
-      exit 2
-    fi
-    echo "Running the official FlashHead ${smoke_model^^} smoke test"
+    echo "Running the official FlashHead Lite smoke test"
     exec python generate_video.py \
       --ckpt_dir "${MODEL_ROOT}/SoulX-FlashHead-1_3B" \
       --wav2vec_dir "${MODEL_ROOT}/wav2vec2-base-960h" \
-      --model_type "${smoke_model}" \
+      --model_type lite \
       --cond_image examples/girl.png \
       --audio_path examples/podcast_sichuan_16k.wav \
       --audio_encode_mode stream \
-      --save_file "/workspace/flashhead-${smoke_model}-smoke.mp4"
+      --save_file "/workspace/flashhead-lite-smoke.mp4"
     ;;
   idle|shell)
     echo "Container ready. RUN_MODE=${RUN_MODE}. Keeping the Pod alive."
